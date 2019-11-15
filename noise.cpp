@@ -1,20 +1,14 @@
-// Two-dimensional value noise based on Hugo Elias's description:
-//   http://freespace.virgin.net/hugo.elias/models/m_perlin.htm
-
-#include <cstdio>
-#include <cmath>
-#include <cstdlib>
+#include <stdio.h>
+#include <math.h>
+#include <stdlib.h>
 using namespace std;
 
-int numX = 512,
-    numY = 512,
-    numOctaves = 7;
+#define MAX_SEEDS 10
+
+int num_x = 512, num_y = 512, num_octaves = 7, seed_index = 0;;
 double persistence = 0.5;
 
-#define maxPrimeIndex 10
-int primeIndex = 0;
-
-int primes[maxPrimeIndex][3] = {
+int seeds[MAX_SEEDS][3] = {
   { 995615039, 600173719, 701464987 },
   { 831731269, 162318869, 136250887 },
   { 174329291, 946737083, 245679977 },
@@ -27,104 +21,88 @@ int primes[maxPrimeIndex][3] = {
   { 997169939, 842027887, 423882827 }
 };
 
-double Noise(int i, int x, int y) {
-  int n = x + y * 57;
-  n = (n << 13) ^ n;
-  int a = primes[i][0], b = primes[i][1], c = primes[i][2];
-  int t = (n * (n * n * a + b) + c) & 0x7fffffff;
-  return 1.0 - (double)(t)/1073741824.0;
+double noise(int i, int x, int y) {
+    int n = ((x + y * 57) << 13) ^ (x + y * 57);
+    int t = (n * (n * n * seeds[i][0] + seeds[i][1]) + seeds[i][2]) &
+        0x7fffffff;
+    return 1.0 - (double)(t)/1073741824.0;
 }
 
-double SmoothedNoise(int i, int x, int y) {
-  double corners = (Noise(i, x-1, y-1) + Noise(i, x+1, y-1) +
-                    Noise(i, x-1, y+1) + Noise(i, x+1, y+1)) / 16,
-         sides = (Noise(i, x-1, y) + Noise(i, x+1, y) + Noise(i, x, y-1) +
-                  Noise(i, x, y+1)) / 8,
-         center = Noise(i, x, y) / 4;
-  return corners + sides + center;
+double smooth_noise(int i, int x, int y) {
+    double vertex = (noise(i, x - 1, y - 1) + noise(i, x + 1, y - 1) + 
+        noise(i, x - 1, y + 1) + noise(i, x + 1, y + 1)) / 16;
+    double edge = (noise(i, x - 1, y) + noise(i, x + 1, y) + 
+        noise(i, x, y - 1) + noise(i, x, y + 1)) / 8;
+    double center = noise(i, x, y) / 4;
+    return vertex + edge + center;
 }
 
-double Interpolate(double a, double b, double x) {  // cosine interpolation
-  double ft = x * 3.1415927,
-         f = (1 - cos(ft)) * 0.5;
-  return  a*(1-f) + b*f;
+double interpolate(double a, double b, double x) {  // cosine interpolation
+    double f = (1 - cos(x * 3.1415927)) * 0.5;
+    return  a*(1 - f) + b*f;
 }
 
-double InterpolatedNoise(int i, double x, double y) {
-  int integer_X = x;
-  double fractional_X = x - integer_X;
-  int integer_Y = y;
-  double fractional_Y = y - integer_Y;
+double interpolated_noise(int i, double x, double y) {
+    int int_x = x;
+    double delta_x = x - int_x;
+    int int_y = y;
+    double delta_y = y - int_y;
 
-  double v1 = SmoothedNoise(i, integer_X, integer_Y),
-         v2 = SmoothedNoise(i, integer_X + 1, integer_Y),
-         v3 = SmoothedNoise(i, integer_X, integer_Y + 1),
-         v4 = SmoothedNoise(i, integer_X + 1, integer_Y + 1),
-         i1 = Interpolate(v1, v2, fractional_X),
-         i2 = Interpolate(v3, v4, fractional_X);
-  return Interpolate(i1, i2, fractional_Y);
+    double v1 = smooth_noise(i, int_x, int_y),
+        v2 = smooth_noise(i, int_x + 1, int_y),
+        v3 = smooth_noise(i, int_x, int_y + 1),
+        v4 = smooth_noise(i, int_x + 1, int_y + 1),
+        i1 = interpolate(v1, v2, delta_x),
+        i2 = interpolate(v3, v4, delta_x);
+    return interpolate(i1, i2, delta_y);
 }
 
-double ValueNoise_2D(double x, double y) {
-  double total = 0,
-         frequency = pow(2, numOctaves),
-         amplitude = 1;
-  for (int i = 0; i < numOctaves; ++i) {
-    frequency /= 2;
-    amplitude *= persistence;
-    total += InterpolatedNoise((primeIndex + i) % maxPrimeIndex,
-        x / frequency, y / frequency) * amplitude;
-  }
-  return total / frequency;
+double generate_noise(double x, double y) {
+    double total = 0, f = pow(2, num_octaves), a = 1;
+    for (int i = 0; i < num_octaves; ++i) {
+        f /= 2;
+        a *= persistence;
+        total += interpolated_noise((seed_index + i) % MAX_SEEDS,
+            x / f, y / f) * a;
+    }
+    return total / f;
 }
 
 int main(int argc, char** args) {
-    int out = 0;
-    if (argc == 7) {
-        numX = atoi(args[1]);
-        numY = atoi(args[2]);
-        numOctaves = atoi(args[3]);
-        persistence = atof(args[4]);
-        primeIndex = atoi(args[5]) % maxPrimeIndex;
-        out = atoi(args[6]);
-    }
-    fprintf(stderr, "numX: %d, numY: %d, numOctaves: %d, persistence: %.5f, ",
-        numX, numY, numOctaves, persistence);
-    fprintf(stderr, "primeIndex: %d\n", primeIndex);
-    if (out) {
-        printf("var rawNoise = [\n");
-        for (int y = 0; y < numY; ++y) {
-            for (int x = 0; x < numX; ++x) {
-                double noise = ValueNoise_2D(x, y);
-                if (x == 0) {
-                    printf("  [");
-                }
-                printf("%.5f", noise);
-                if (x == numX-1) {
-                    printf("]");
-                    if (y == numY-1) {
-                        printf("\n];\n");
-                    } else {
-                        printf(",\n");
-                    }
-                } else {
-                    printf(", ");
-                }
-            }
-        }
+    FILE *f = fopen("raw.dat", "w");;
+
+    num_x = atoi(args[1]);
+    num_y = atoi(args[2]);
+    num_octaves = atoi(args[3]);
+    persistence = atof(args[4]);
+    seed_index = atoi(args[5]) % MAX_SEEDS;
+
+    printf("X: %d, Y: %d, Octaves: %d, Persistence: %.2f\n",
+        num_x, num_y, num_octaves, persistence);
+    
+    if (seed_index) {
+        printf("Seed Index: %d\n", seed_index);
     }
     else {
-        for (int y = 0; y < numY; y++) {
-            for (int x = 0; x < numX; x++) {
-                double noise = ValueNoise_2D(x,y);
-                if (x != numX - 1) {
-                    printf("%.5f ", noise);
-                }
-                else {
-                    printf("%.5f\n", noise);
-                }
+        printf("Default seed used.\n");
+    }
+
+    printf("[%d, %d, %d]\n", seeds[seed_index][0], seeds[seed_index][1],
+        seeds[seed_index][2]);
+
+    for (int i = 0; i < num_x; i++) {
+        for (int j = 0; j < num_y; j++) {
+            double noise = generate_noise(i,j);
+            if (j != num_y - 1) {
+                fprintf(f, "%.5f ", noise);
+            }
+            else {
+                fprintf(f, "%.5f\n", noise);
             }
         }
     }
+
+    fclose(f);
+
     return 0;
 }
